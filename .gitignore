@@ -1,0 +1,42 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Editor settings
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Runtime files and logs
+*.log
+logs/
+uploads/
+extracted/
+output/
+storage/
+
+# Local databases
+*.db
+*.sqlite3
+
+# Coverage reports
+.coverage
+htmlcov/
+
+models/piper/
+storage/audio/
+test_english.wav
+test_bangla.wav

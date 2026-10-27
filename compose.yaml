@@ -1,0 +1,49 @@
+name: sapio-ai
+
+x-backend-common: &backend-common
+  image: sapio-backend:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env.docker
+  volumes:
+    - sapio_uploads:/app/storage/uploads
+    - sapio_audio:/app/storage/audio
+    - sapio_popular:/app/storage/popular_summaries
+    - ./models/piper:/app/models/piper:ro
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: sapio_db
+      POSTGRES_USER: sapio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
+    volumes:
+      - sapio_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sapio -d sapio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *backend-common
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    <<: *backend-common
+    command: ["python", "-m", "app.workers.job_worker", "--poll-seconds", "3"]
+
+volumes:
+  sapio_pgdata:
+  sapio_uploads:
+  sapio_audio:
+  sapio_popular:
