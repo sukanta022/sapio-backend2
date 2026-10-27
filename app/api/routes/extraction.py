@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import get_settings
+from app.services.object_storage import cloud_enabled, document_key, ensure_local, ObjectStorageError
 from app.core.logging import get_logger
 from app.db.models import Document, ExtractionJob, User
 from app.db.session import get_db
@@ -65,6 +66,14 @@ def resolve_document_path(
             status_code=400,
             detail="Invalid stored document path.",
         )
+
+    if cloud_enabled():
+        try:
+            ensure_local(document_key(relative_path), full_path)
+        except (ObjectStorageError, FileNotFoundError):
+            raise HTTPException(404, "Stored document not found in cloud storage.") from None
+    elif not full_path.is_file():
+        raise HTTPException(404, "Stored document file not found.")
 
     return full_path
 
@@ -130,17 +139,14 @@ def process_document(
             detail="An extraction job already exists.",
         ) from None
 
-    file_path = resolve_document_path(
-        document.file_path
-    )
-
     try:
+        file_path = resolve_document_path(document.file_path)
         result = extract_and_clean(
             file_path,
             document.file_type,
         )
 
-    except ExtractionError as exc:
+    except (ExtractionError, HTTPException) as exc:
         logger.warning(
             "Extraction failed for document_id=%s: %s",
             document.id,
@@ -153,7 +159,7 @@ def process_document(
 
         raise HTTPException(
             status_code=422,
-            detail=str(exc),
+            detail=(exc.detail if isinstance(exc, HTTPException) else str(exc)),
         ) from None
 
     job.extracted_text = result.extracted_text

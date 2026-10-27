@@ -13,6 +13,7 @@ from app.db.models import User
 from app.db.session import get_db
 from app.schemas.popular_summaries import PopularSummaryResponse
 from app.services.audio_streaming import make_audio_stream
+from app.services.object_storage import cloud_enabled, popular_key, upload_path, download_path, delete_object, ObjectStorageError
 
 router = APIRouter(prefix="/popular-summaries", tags=["Popular Summaries Media"])
 MEDIA_TYPES = {
@@ -65,6 +66,8 @@ async def save_upload(file: UploadFile, kind: str, summary_id: int) -> Path:
                         raise ValueError("Empty WAV")
             except (wave.Error, EOFError, ValueError):
                 raise HTTPException(415, "Invalid WAV file.") from None
+        if cloud_enabled():
+            upload_path(destination, popular_key(summary_id, destination.name), MEDIA_TYPES[kind][suffix])
         return destination
     except Exception:
         destination.unlink(missing_ok=True)
@@ -73,12 +76,29 @@ async def save_upload(file: UploadFile, kind: str, summary_id: int) -> Path:
         await file.close()
 
 
-def safe_path(stored: str | None, summary_id: int) -> Path:
+def _media_name(stored: str | None, summary_id: int) -> str:
     if not stored:
         raise HTTPException(404, "Media is unavailable.")
-    root = media_root()
-    path = Path(stored).resolve()
-    if not path.is_relative_to(root / str(summary_id)) or not path.is_file():
+    # Existing DB entries may be Windows absolute paths. Do not use
+    # those paths to access Render's filesystem; only use basename.
+    name = stored.replace("\\", "/").rsplit("/", 1)[-1]
+    if name in ("", ".", "..") or not name.startswith(("audio-", "cover-", "document-")):
+        raise HTTPException(404, "Media is unavailable.")
+    return name
+
+
+def safe_path(stored: str | None, summary_id: int) -> Path:
+    name = _media_name(stored, summary_id)
+    folder = (media_root() / str(summary_id)).resolve()
+    path = (folder / name).resolve()
+    if not path.is_relative_to(folder):
+        raise HTTPException(404, "Media is unavailable.")
+    if cloud_enabled() and not path.is_file():
+        try:
+            download_path(popular_key(summary_id, name), path)
+        except ObjectStorageError:
+            raise HTTPException(404, "Media is unavailable.") from None
+    if not path.is_file():
         raise HTTPException(404, "Media is unavailable.")
     return path
 
@@ -107,22 +127,35 @@ async def upload_popular_media(
                 new_path = await save_upload(upload, kind, summary_id)
                 saved.append(new_path)
                 old.append((attr, getattr(summary, attr)))
-                setattr(summary, attr, str(new_path))
+                setattr(summary, attr, (
+                    f"popular-media/{summary_id}/{new_path.name}"
+                    if cloud_enabled() else str(new_path)
+                ))
         db.commit()
         db.refresh(summary)
     except Exception:
         db.rollback()
         for path in saved:
+            if cloud_enabled():
+                try:
+                    delete_object(popular_key(summary_id, path.name))
+                except ObjectStorageError:
+                    pass
             path.unlink(missing_ok=True)
         raise
     # Remove only prior files owned by the same summary and storage root.
     for _attr, previous in old:
-        try:
-            previous_path = safe_path(previous, summary_id)
-        except HTTPException:
+        if not previous:
             continue
-        if previous_path not in saved:
-            previous_path.unlink(missing_ok=True)
+        try:
+            name = _media_name(previous, summary_id)
+            previous_path = media_root() / str(summary_id) / name
+            if cloud_enabled():
+                delete_object(popular_key(summary_id, name))
+            if previous_path not in saved:
+                previous_path.unlink(missing_ok=True)
+        except (HTTPException, ObjectStorageError):
+            continue
     return serialize_summary(db, summary)
 
 

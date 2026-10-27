@@ -21,3 +21,4 @@ google-genai>=1.0,<2.0
 google-cloud-texttospeech>=2.21,<3.0
 
 piper-tts>=1.7,<2
+boto3>=1.35,<2.0

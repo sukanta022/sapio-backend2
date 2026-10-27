@@ -1,4 +1,3 @@
-
 import io
 import json
 import re
@@ -15,6 +14,7 @@ from pathlib import Path
 from piper import PiperVoice, SynthesisConfig
 
 from app.core.config import get_settings
+from app.services.object_storage import cloud_enabled, audio_key, upload_path, delete_object, ensure_local, ObjectStorageError
 
 
 class TTSError(Exception):
@@ -439,9 +439,17 @@ def generate_audio(
 
             shutil.copyfile(source, destination)
 
+        file_size = destination.stat().st_size
+        if cloud_enabled():
+            upload_path(
+                destination,
+                audio_key(relative_path.as_posix()),
+                "audio/mpeg" if output_format == "MP3" else "audio/wav",
+            )
+
         return AudioResult(
             relative_path=relative_path.as_posix(),
-            file_size=destination.stat().st_size,
+            file_size=file_size,
             duration_seconds=max(1, round(duration)),
             chunks_processed=len(chunks),
         )
@@ -460,10 +468,13 @@ def resolve_audio_path(relative_path: str) -> Path:
             "Invalid audio storage path."
         )
 
-    if not path.is_file():
-        raise TTSError(
-            "Stored audio file is missing."
-        )
+    if cloud_enabled():
+        try:
+            ensure_local(audio_key(relative_path), path)
+        except (ObjectStorageError, FileNotFoundError) as exc:
+            raise TTSError("Stored audio file is missing.") from exc
+    elif not path.is_file():
+        raise TTSError("Stored audio file is missing.")
 
     return path
 
@@ -477,4 +488,6 @@ def remove_audio_file(relative_path: str) -> None:
             "Invalid audio storage path."
         )
 
+    if cloud_enabled():
+        delete_object(audio_key(relative_path))
     path.unlink(missing_ok=True)

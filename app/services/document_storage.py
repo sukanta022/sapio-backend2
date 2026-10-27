@@ -6,6 +6,9 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import get_settings
+from app.services.object_storage import (
+    cloud_enabled, document_key, upload_path, delete_object,
+)
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -192,6 +195,13 @@ async def save_uploaded_document(
             destination,
         )
 
+        if cloud_enabled():
+            content_type = (
+                "application/pdf" if file_type == "pdf"
+                else "application/epub+zip"
+            )
+            upload_path(destination, document_key(relative_path.as_posix()), content_type)
+
         return (
             original_name,
             file_type,
@@ -216,4 +226,6 @@ def remove_stored_document(relative_path: str) -> None:
     if not file_path.is_relative_to(storage_root):
         raise ValueError("Invalid document storage path")
 
+    if cloud_enabled():
+        delete_object(document_key(relative_path))
     file_path.unlink(missing_ok=True)

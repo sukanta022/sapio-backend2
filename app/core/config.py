@@ -50,6 +50,13 @@ class Settings(BaseSettings):
 
     STORAGE_ROOT: Path = Path("storage/uploads")
 
+    STORAGE_BACKEND: Literal["local", "s3"] = "local"
+    AWS_ENDPOINT_URL_S3: str | None = None
+    AWS_REGION: str | None = None
+    AWS_ACCESS_KEY_ID: SecretStr | None = None
+    AWS_SECRET_ACCESS_KEY: SecretStr | None = None
+    S3_BUCKET: str = "uploads"
+
     MAX_UPLOAD_SIZE_MB: int = Field(
         default=20,
         ge=1,
